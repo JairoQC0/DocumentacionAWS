@@ -1,0 +1,70 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  (Paso 2 de 3) Crea los Grupos de Seguridad para la aplicación WordPress.
+  Depende de la pila de red.
+
+Parameters:
+  NetworkStackName:
+    Type: String
+    Description: El nombre de la pila de CloudFormation que contiene los recursos de red (VPC).
+  
+  SSHLocation:
+    Description: Rango de IP para acceso SSH (e.g., 54.24.34.0/32).
+    Type: String
+    Default: 0.0.0.0/0
+
+Resources:
+  EC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Habilita acceso HTTP/S y SSH para el Frontend.
+      # CORRECCIÓN: Se usa la sintaxis explícita y completa para anidar funciones.
+      VpcId:
+        Fn::ImportValue:
+          Fn::Sub: '${NetworkStackName}-VPCID'
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref SSHLocation
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-EC2-SG'
+
+  RDSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Habilita acceso a la base de datos solo desde el Security Group del Frontend.
+      # CORRECCIÓN: Se usa la sintaxis explícita y completa para anidar funciones.
+      VpcId:
+        Fn::ImportValue:
+          Fn::Sub: '${NetworkStackName}-VPCID'
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          SourceSecurityGroupId: !Ref EC2SecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-RDS-SG'
+
+Outputs:
+  EC2SecurityGroupId:
+    Description: El ID del Security Group para la instancia EC2.
+    Value: !Ref EC2SecurityGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-EC2SGroupID'
+
+  RDSSecurityGroupId:
+    Description: El ID del Security Group para la base de datos RDS.
+    Value: !Ref RDSSecurityGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-RDSSGroupID'

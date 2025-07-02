@@ -1,0 +1,90 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  (Paso 3 de 3) Despliega los recursos de la aplicación (EC2, RDS).
+  Depende de las pilas de red y de seguridad.
+
+Parameters:
+  NetworkStackName:
+    Type: String
+    Description: Nombre de la pila de red.
+
+  SecurityStackName:
+    Type: String
+    Description: Nombre de la pila de seguridad.
+
+  DBPassword:
+    NoEcho: true
+    Description: Contraseña para la base de datos.
+    Type: String
+    MinLength: 8
+
+  KeyPairName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Nombre del par de claves para acceso SSH.
+
+Resources:
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnet group para la base de datos de WordPress.
+      SubnetIds:
+        Fn::Split:
+          - ","
+          - Fn::ImportValue:
+              Fn::Sub: "${NetworkStackName}-PrivateSubnetIDs"
+
+  RDSInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBName: wordpressdb
+      Engine: mysql
+      MasterUsername: admin
+      MasterUserPassword: !Ref DBPassword
+      # CORRECCIÓN FINAL: Se usa db.t3.micro, que es compatible y parte de la capa gratuita.
+      DBInstanceClass: db.t3.micro
+      AllocatedStorage: "20"
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      VPCSecurityGroups:
+        - Fn::ImportValue:
+            Fn::Sub: "${SecurityStackName}-RDSSGroupID"
+      PubliclyAccessible: false
+      DeletionProtection: false
+
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t2.micro
+      KeyName: !Ref KeyPairName
+      ImageId: "ami-0bbe33b61c1e14975" # Amazon Linux 2 AMI (us-east-1). Actualiza si usas otra región.
+      SecurityGroupIds:
+        - Fn::ImportValue:
+            Fn::Sub: "${SecurityStackName}-EC2SGroupID"
+      SubnetId:
+        Fn::ImportValue:
+          Fn::Sub: "${NetworkStackName}-PublicSubnetID"
+      UserData: !Base64
+        "Fn::Sub": |
+          #!/bin/bash -xe
+          yum update -y
+          amazon-linux-extras install -y lamp-mariadb10.2-php7.2 php7.2
+          yum install -y httpd mariadb-server
+          wget https://wordpress.org/latest.tar.gz
+          tar -xzf latest.tar.gz
+          cp -r wordpress/* /var/www/html/
+          cd /var/www/html/
+          cp wp-config-sample.php wp-config.php
+          sed -i "s/database_name_here/wordpressdb/" wp-config.php
+          sed -i "s/username_here/admin/" wp-config.php
+          sed -i "s/password_here/${DBPassword}/" wp-config.php
+          sed -i "s/localhost/${RDSInstance.Endpoint.Address}/" wp-config.php
+          SALT=$(curl -L https://api.wordpress.org/secret-key/1.1/salt/)
+          STRING_TO_REPLACE="'put your unique phrase here'"
+          printf '%s\n' "g/$STRING_TO_REPLACE/d" a "$SALT" . w | ed -s wp-config.php
+          chown -R apache:apache /var/www/html/
+          systemctl start httpd
+          systemctl enable httpd
+
+Outputs:
+  WebsiteURL:
+    Description: URL para acceder a la instalación de WordPress.
+    Value: !Sub "http://${EC2Instance.PublicDnsName}"
